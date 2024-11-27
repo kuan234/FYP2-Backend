@@ -3,15 +3,47 @@ import requests
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+from .serializers import ItemSerializer
 from django.conf import settings
+from django.shortcuts import get_object_or_404
+from django.contrib.auth.hashers import check_password
 from base.models import Employee
 from PIL import Image
 import requests
 
 @api_view(['GET'])
 def getData(request):
-    person = {'name': 'Dennis', 'Age':28}
-    return Response(person)
+    employee = Employee.objects.all()
+    serializer = ItemSerializer(employee, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+def addEmployee(request):
+    serializer = ItemSerializer(data = request.data)
+    if serializer.is_valid():
+        serializer.save()
+    return Response()
+
+@api_view(['POST'])
+def login_view(request):
+    if request.method == 'POST':
+        email = request.data.get('email')
+        password = request.data.get('password')
+
+        try:
+            # Get the employee by email
+            employee = Employee.objects.get(email=email)
+
+            # Directly compare plain text password with stored plain text password
+            if password == employee.password:
+                return Response({"message": "Login successful!"}, status=200)
+            else:
+                return Response({"message": "Invalid credentials"}, status=400)
+
+        except Employee.DoesNotExist:
+            return Response({"message": "User not found"}, status=404)
+        except Exception as e:
+            return Response({"message": f"An error occurred: {str(e)}"}, status=500)
 # # Bing API Configuration
 # BING_API_KEY = "e5a0260c7437442b853327d940423691"
 # BING_ENDPOINT = "https://api.bing.microsoft.com/v7.0/images/visualsearch"
