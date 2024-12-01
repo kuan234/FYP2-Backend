@@ -1,15 +1,17 @@
 import os
 import requests
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
+import numpy as np
+from PIL import Image
+from mtcnn import MTCNN
 from rest_framework import status
-from .serializers import ItemSerializer
+from rest_framework.response import Response
+from rest_framework.decorators import api_view
 from django.conf import settings
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.hashers import check_password
+from .serializers import ItemSerializer
 from base.models import Employee
-from PIL import Image
-import requests
 
 @api_view(['GET'])
 def getData(request):
@@ -31,19 +33,92 @@ def login_view(request):
         password = request.data.get('password')
 
         try:
-            # Get the employee by email
             employee = Employee.objects.get(email=email)
-
-            # Directly compare plain text password with stored plain text password
             if password == employee.password:
-                return Response({"message": "Login successful!"}, status=200)
+                # Send the employee details with the response
+                return Response({
+                    "message": "Login successful!",
+                    "employee": {
+                        "email": employee.email,
+                        "name": employee.name,
+                    }
+                }, status=200)
             else:
-                return Response({"message": "Invalid credentials"}, status=400)
+                return Response({"message": "Invalid Username/Password"}, status=400)
 
         except Employee.DoesNotExist:
             return Response({"message": "User not found"}, status=404)
         except Exception as e:
             return Response({"message": f"An error occurred: {str(e)}"}, status=500)
+        
+# Initialize the MTCNN detector once to avoid reloading on every request
+detector = MTCNN()
+
+@api_view(['POST'])
+def detect_face(request):
+    if 'image' not in request.FILES:
+        return JsonResponse({'error': 'No image provided'}, status=400)
+
+    try:
+        # Get the uploaded image
+        image_file = request.FILES['image']
+        img = Image.open(image_file).convert('RGB')
+        
+        # Get original width and height from the request
+        original_width = int(request.POST.get('width', img.width))
+        original_height = int(request.POST.get('height', img.height))
+        print(f"Original Height: {original_height}")  # Debugging resized image shape
+        print(f"Original Width: {original_width}")  # Debugging resized image shape
+
+
+        # Resize for detection
+        resized_width = 240
+        resized_height = 240
+        ratio_height = original_height / resized_height
+        ratio_weight = original_width /resized_width
+        print(f"ratio Height: {ratio_height}")  # Debugging resized image shape
+        print(f"ratio Width: {ratio_weight}") 
+        img_resized = img.resize((resized_width, resized_height))
+
+        # Convert image to NumPy array
+        img_array = np.array(img_resized)
+
+        print(f"Resized image shape: {img_array.shape}")  # Debugging resized image shape
+
+        # Detect faces using MTCNN
+        detections = detector.detect_faces(img_array)
+
+        # Extract bounding boxes and scale them back to the original size
+        faces = []
+        for detection in detections:
+            x, y, w, h = detection['box']  # x, y are the top-left corner, w and h are width and height
+
+            # Scale bounding box back to the original dimensions
+            scale_x = ratio_weight
+            scale_y = ratio_height
+
+            scaled_face = {
+                'x': int(x * scale_x ),
+                'y': int(y * scale_y ),
+                'width': int(w * scale_x ),
+                'height': int(h * scale_y ),
+            }
+            print(f"Detected face (scaled): {scaled_face}")  # Debug log
+            faces.append(scaled_face)
+
+        print(f"Detected faces (original scale): {faces}")  # Debugging bounding boxes
+        print(f"Num Face: {len(faces)}")  # Debugging bounding boxes
+        # Return the bounding box data along with the number of faces detected
+        return JsonResponse({
+            'face_detected': len(faces) > 0,
+            'num_faces': len(faces),
+            'faces': faces,
+        })
+
+    except Exception as e:
+        print("Error during face detection:", str(e))
+        return JsonResponse({'error': f'Error during face detection: {str(e)}'}, status=500)
+
 # # Bing API Configuration
 # BING_API_KEY = "e5a0260c7437442b853327d940423691"
 # BING_ENDPOINT = "https://api.bing.microsoft.com/v7.0/images/visualsearch"
