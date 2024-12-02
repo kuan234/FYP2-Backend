@@ -7,9 +7,10 @@ urlpatterns = [
     path('get/', views.getData),
     path('add/', views.addEmployee),
     path('login/', views.login_view),
-    path('detect_face/', views.detect_face),
+    path('verify_face/', views.verify_face),
 ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
+    # path('detect_face/', views.detect_face),
 # urlpatterns = [
 #     path('search/', views.searchProducts),
 #     path('upload/', views.uploadImage),
