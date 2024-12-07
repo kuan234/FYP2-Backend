@@ -10,33 +10,79 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.hashers import check_password
-from .serializers import ItemSerializer
+from rest_framework.parsers import MultiPartParser
+from .serializers import EmployeeSerializer
 from base.models import Employee
 from deepface import DeepFace
 
-
+# Get employee data
 @api_view(['GET'])
 def getData(request):
     user_id = request.GET.get('user_id')  # Retrieve the user_id from query parameters
     if user_id:
         try:
             employee = Employee.objects.get(id=user_id)  # Filter by user_id
-            serializer = ItemSerializer(employee)  # Serialize single object
+            serializer = EmployeeSerializer(employee)  # Serialize single object
             return Response(serializer.data)
         except Employee.DoesNotExist:
             return Response({'error': 'User not found'}, status=404)
     else:
         employee = Employee.objects.all()  # Retrieve all users if no user_id is provided
-        serializer = ItemSerializer(employee, many=True)
+        serializer = EmployeeSerializer(employee, many=True)
         return Response(serializer.data)
 
+# Get employee attendance log with ID
+@api_view(['GET'])
+def getData(request):
+    user_id = request.GET.get('user_id')  # Retrieve the user_id from query parameters
+    if user_id:
+        try:
+            employee = Employee.objects.get(id=user_id)  # Filter by user_id
+            serializer = EmployeeSerializer(employee)  # Serialize single object
+            return Response(serializer.data)
+        except Employee.DoesNotExist:
+            return Response({'error': 'User not found'}, status=404)
+    else:
+        employee = Employee.objects.all()  # Retrieve all users if no user_id is provided
+        serializer = EmployeeSerializer(employee, many=True)
+        return Response(serializer.data)
 
 @api_view(['POST'])
 def addEmployee(request):
-    serializer = ItemSerializer(data = request.data)
+
+    # if 'image' not in request.FILES:
+    #     return Response({"error": "No image file provided."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # try:
+    #     # Save the uploaded image
+    #     image = request.FILES['image']
+    #     image_instance = ImageModel(image_path=image)
+    #     image_instance.save()
+
+    #     original_img_path = os.path.join(settings.MEDIA_ROOT, image_instance.image_path.name)
+    #     if not os.path.exists(original_img_path):
+    #         print(f"[ERROR] Image path does not exist: {original_img_path}")
+    #         return Response({"error": "Image file not saved correctly."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    #     print(f"[DEBUG] Rea
+
+
+    # Deserialize incoming data
+    serializer = EmployeeSerializer(data=request.data)
+    parser_classes = (MultiPartParser, )
+    
     if serializer.is_valid():
         serializer.save()
-    return Response()
+        return Response(
+            {"message": "Employee added successfully!", "data": serializer.data},
+            status=status.HTTP_201_CREATED
+        )
+    else:
+        return Response(
+            {"errors": serializer.errors},
+             status=status.HTTP_400_BAD_REQUEST
+            )
+
 
 @api_view(['POST'])
 def login_view(request):
@@ -214,19 +260,46 @@ def verify_face(request):
         verification_results = []
         for face_path in cropped_face_paths:
             try:
+# result = DeepFace.verify(img1_path, img2_path, model_name="VGG-Face", detector_backend="opencv", distance_metric="cosine", enforce_detection=True, align=True, normalization="base")
+
                 result = DeepFace.verify(
                     img1_path=face_path, # Crop Image
                     img2_path=reference_image_path, # User Face Image in Database
                     model_name="Facenet",  # or "VGG-Face"
                     enforce_detection=False
                 )
-                verification_results.append({
+                 # Extract the distance or similarity score
+                distance = result['distance']  # The smaller the distance, the more similar the faces
+                
+                # Set the threshold to 0.3  , distance need to < threshold
+                threshold = 0.4
+
+                # Check if faces are verified based on the threshold
+                if distance < threshold:
+                    verification_results.append({
                     'face_path': face_path,
-                    'verified': result['verified'],
+                    'verified': True,
                     'distance': result['distance'],
                     'threshold': result['threshold'],
                     'similarity': 1 - result['distance'],  # Calculate similarity
-                })
+                })                    
+                else:
+                    verification_results.append({
+                    'face_path': face_path,
+                    'verified': False,
+                    'distance': result['distance'],
+                    'threshold': result['threshold'],
+                    'similarity': 1 - result['distance'],  # Calculate similarity
+                }) 
+                    
+                # verification_results.append({
+                #     'face_path': face_path,
+                #     'verified': result['verified'],
+                #     'distance': result['distance'],
+                #     'threshold': result['threshold'],
+                #     'similarity': 1 - result['distance'],  # Calculate similarity
+                # })  
+                
                 print(f"[DEBUG] Result: {verification_results}")
                 detected_image_path = "/media/images/detected_faces.jpg"
                 print(f"[DEBUG] detected_image_path: {detected_image_path}")

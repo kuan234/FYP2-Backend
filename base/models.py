@@ -9,7 +9,7 @@ class Employee(models.Model):
     password = models.CharField(max_length=20)
     role = models.CharField(max_length=20)
     department = models.CharField(max_length=50)
-    faceImage = models.ImageField(upload_to='images/')
+    faceImage = models.ImageField(upload_to='images/', blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
 class AttendanceLog(models.Model):
