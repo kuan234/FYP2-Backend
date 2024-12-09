@@ -14,6 +14,8 @@ from rest_framework.parsers import MultiPartParser
 from .serializers import EmployeeSerializer
 from base.models import Employee
 from deepface import DeepFace
+from base.models import AttendanceLog
+
 
 # Get employee data
 @api_view(['GET'])
@@ -31,57 +33,23 @@ def getData(request):
         serializer = EmployeeSerializer(employee, many=True)
         return Response(serializer.data)
 
-# Get employee attendance log with ID
-@api_view(['GET'])
-def getData(request):
-    user_id = request.GET.get('user_id')  # Retrieve the user_id from query parameters
-    if user_id:
-        try:
-            employee = Employee.objects.get(id=user_id)  # Filter by user_id
-            serializer = EmployeeSerializer(employee)  # Serialize single object
-            return Response(serializer.data)
-        except Employee.DoesNotExist:
-            return Response({'error': 'User not found'}, status=404)
-    else:
-        employee = Employee.objects.all()  # Retrieve all users if no user_id is provided
-        serializer = EmployeeSerializer(employee, many=True)
-        return Response(serializer.data)
-
 @api_view(['POST'])
-def addEmployee(request):
-
-    # if 'image' not in request.FILES:
-    #     return Response({"error": "No image file provided."}, status=status.HTTP_400_BAD_REQUEST)
-    
-    # try:
-    #     # Save the uploaded image
-    #     image = request.FILES['image']
-    #     image_instance = ImageModel(image_path=image)
-    #     image_instance.save()
-
-    #     original_img_path = os.path.join(settings.MEDIA_ROOT, image_instance.image_path.name)
-    #     if not os.path.exists(original_img_path):
-    #         print(f"[ERROR] Image path does not exist: {original_img_path}")
-    #         return Response({"error": "Image file not saved correctly."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    #     print(f"[DEBUG] Rea
-
-
-    # Deserialize incoming data
-    serializer = EmployeeSerializer(data=request.data)
-    parser_classes = (MultiPartParser, )
-    
-    if serializer.is_valid():
-        serializer.save()
-        return Response(
-            {"message": "Employee added successfully!", "data": serializer.data},
-            status=status.HTTP_201_CREATED
-        )
+def add_employee(request):
+    if 'faceImage' not in request.FILES:
+        print(f"[DEBUG] No image")
+        image_face = None
     else:
-        return Response(
-            {"errors": serializer.errors},
-             status=status.HTTP_400_BAD_REQUEST
-            )
+        image_face = request.FILES['faceImage']
+    
+    print(f"[DEBUG] image: {image_face}")
+    serializer = EmployeeSerializer(data=request.data)
+    if serializer.is_valid():
+        employee = serializer.save()
+        if image_face:
+            employee.faceImage = image_face
+            employee.save()
+        return Response({"message": "Employee added successfully!", "id": employee.id}, status=201)
+    return Response(serializer.errors, status=400)
 
 
 @api_view(['POST'])
@@ -109,6 +77,13 @@ def login_view(request):
             return Response({"message": "User not found"}, status=404)
         except Exception as e:
             return Response({"message": f"An error occurred: {str(e)}"}, status=500)
+
+     
+@api_view(['GET'])
+def get_logs(request):
+    date = request.GET.get('date')
+    logs = AttendanceLog.objects.filter(date=date).values('clock_in', 'clock_out', 'total_hours')
+    return JsonResponse({'logs': list(logs)})
         
 # Initialize the MTCNN detector once to avoid reloading on every request
 detector = MTCNN()
@@ -182,7 +157,9 @@ detector = MTCNN()
 @api_view(['POST'])
 def verify_face(request):
     if 'image' not in request.FILES:
+        print(f"[DEBUG] No Image Provided")
         return Response({'error': 'No image provided'}, status=400)
+        
 
     try:
         # 1. Process the Captured Image
