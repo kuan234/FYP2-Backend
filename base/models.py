@@ -23,8 +23,18 @@ class AttendanceLog(models.Model):
     
     def calculate_total_hours(self):
         # Calculate total hours worked
-        total_hours =  (self.check_out_time - self.check_in_time).seconds / 3600
-        return round(total_hours, 2)
+            # Ensure both check-in and check-out times are present
+        if self.check_in_time and self.check_out_time:
+            # Calculate the total duration in seconds
+            total_seconds = (self.check_out_time - self.check_in_time).seconds
+            
+            # Convert seconds to hours and minutes
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            
+            # Return formatted string
+            return f"{hours} hrs {minutes} minutes"
+        return "N/A"  # Handle cases where check-in or check-out is missing
 
     def is_checked_in(self):
         return self.check_in_time is not None

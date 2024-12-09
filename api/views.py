@@ -85,16 +85,24 @@ def login_view(request):
 def get_attendance_by_date(request):
     # Get the date from the query parameters
     date_str = request.GET.get('date')
+    user_id = request.GET.get('user_id')  # Get user_id from the request
+
+    if not user_id:
+        print(f"[DEBUG] Not User ID")
+        return Response({'error': 'User ID is required'}, status=400)
+
     if not date_str:
+        print(f"[DEBUG] Not Date")
         return Response({'error': 'Date is required'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
+        print(f"[DEBUG] Invalid Date format")
         return Response({'error': 'Invalid date format, use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
 
     # Fetch attendance records for the selected date
-    attendances = AttendanceLog.objects.filter(date=selected_date)
+    attendances = AttendanceLog.objects.filter(employee_id=user_id, date=selected_date)
 
     if not attendances.exists():
         return Response({'message': 'No attendance logs found for this date'}, status=status.HTTP_404_NOT_FOUND)
