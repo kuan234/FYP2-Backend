@@ -13,10 +13,24 @@ class Employee(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 class AttendanceLog(models.Model):
-    date = models.DateField(default=datetime.now)
+    date = models.DateField(auto_now_add=True)
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT)
-    description = models.CharField(max_length=200)
+    check_in_time = models.DateTimeField(null=True, blank=True)
+    check_out_time = models.DateTimeField(null=True, blank=True)
 
+    def __str__(self):
+        return f"Attendance for {self.employee.name} on {self.date}"
+    
+    def calculate_total_hours(self):
+        # Calculate total hours worked
+        total_hours =  (self.check_out_time - self.check_in_time).seconds / 3600
+        return round(total_hours, 2)
+
+    def is_checked_in(self):
+        return self.check_in_time is not None
+
+    def is_checked_out(self):
+        return self.check_out_time is not None
 
 # class Item(models.Model):
 #     name = models.CharField(max_length=200)

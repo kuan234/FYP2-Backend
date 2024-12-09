@@ -11,10 +11,12 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.hashers import check_password
 from rest_framework.parsers import MultiPartParser
-from .serializers import EmployeeSerializer
+from .serializers import EmployeeSerializer, AttendanceSerializer
 from base.models import Employee
 from deepface import DeepFace
 from base.models import AttendanceLog
+from datetime import datetime, time
+
 
 
 # Get employee data
@@ -80,10 +82,33 @@ def login_view(request):
 
      
 @api_view(['GET'])
-def get_logs(request):
-    date = request.GET.get('date')
-    logs = AttendanceLog.objects.filter(date=date).values('clock_in', 'clock_out', 'total_hours')
-    return JsonResponse({'logs': list(logs)})
+def get_attendance_by_date(request):
+    # Get the date from the query parameters
+    date_str = request.GET.get('date')
+    if not date_str:
+        return Response({'error': 'Date is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return Response({'error': 'Invalid date format, use YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Fetch attendance records for the selected date
+    attendances = AttendanceLog.objects.filter(date=selected_date)
+
+    if not attendances.exists():
+        return Response({'message': 'No attendance logs found for this date'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Serialize the attendance data
+    attendance_data = []
+    for attendance in attendances:
+        attendance_data.append({
+            'check_in_time': attendance.check_in_time.strftime('%H:%M:%S'),
+            'check_out_time': attendance.check_out_time.strftime('%H:%M:%S'),
+            'total_hours': attendance.calculate_total_hours(),
+        })
+
+    return Response({'logs': attendance_data}, status=status.HTTP_200_OK)
         
 # Initialize the MTCNN detector once to avoid reloading on every request
 detector = MTCNN()
@@ -268,6 +293,7 @@ def verify_face(request):
                     'threshold': result['threshold'],
                     'similarity': 1 - result['distance'],  # Calculate similarity
                 }) 
+            
                     
                 # verification_results.append({
                 #     'face_path': face_path,
@@ -276,7 +302,6 @@ def verify_face(request):
                 #     'threshold': result['threshold'],
                 #     'similarity': 1 - result['distance'],  # Calculate similarity
                 # })  
-                
                 print(f"[DEBUG] Result: {verification_results}")
                 detected_image_path = "/media/images/detected_faces.jpg"
                 print(f"[DEBUG] detected_image_path: {detected_image_path}")
@@ -286,6 +311,44 @@ def verify_face(request):
             except Exception as e:
                 print(f"Error verifying face {face_path} against reference: {e}")
                 verification_results.append({'face_path': face_path, 'error': str(e)})
+
+        if verification_results and any(result['verified'] for result in verification_results):
+            # If at least one face was verified, log attendance
+            # Get today's date and time
+            now = datetime.now()
+            today = now.date()
+
+            # Define valid check-in and check-out times
+            check_in_start = time(9, 0)  # 9:00 AM
+            check_in_end = time(10, 0)   # 10:00 AM
+            check_out_start = time(18, 0)  # 5:00 PM
+            check_out_end = time(23, 59)    # 6:00 PM
+            
+            attendance, created = AttendanceLog.objects.get_or_create(employee=user, date=today)
+            
+            # Check if it's within check-in time range
+            if not AttendanceLog.objects.filter(employee=user, date=today).exists():
+                # Attendance not recorded yet, allow check-in
+                if check_in_start <= now.time() <= check_in_end:
+                    attendance = AttendanceLog.objects.create(employee=user, date=today, check_in_time=now)
+                    message = "Check-in successful"
+                else:
+                    message = f"Check-in is only allowed between {check_in_start} and {check_in_end}."
+            else:
+                # Attendance already exists, check if it's check-out time
+                attendance = AttendanceLog.objects.get(employee=user, date=today)
+
+                if attendance.check_out_time is None:  # If not checked out
+                    if check_out_start <= now.time() <= check_out_end:
+                        attendance.check_out_time = now
+                        attendance.save()
+                        message = "Check-out successful"
+                    else:
+                        message = f"Check-out is only allowed between {check_out_start} and {check_out_end}."
+                else:
+                    message = "Attendance already logged for today"
+
+            print(f"[DEBUG] Attendance: {message}")
 
         # Return Response
         return Response({
@@ -299,67 +362,6 @@ def verify_face(request):
     except Exception as e:
         print("Error during face verification:", str(e))
         return Response({'error': f'Error during face verification: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# # Bing API Configuration
-# BING_API_KEY = "e5a0260c7437442b853327d940423691"
-# BING_ENDPOINT = "https://api.bing.microsoft.com/v7.0/images/visualsearch"
-
-
-# def resize_image(img_path, output_path, max_width=1920, max_height=1080):
-#     """
-#     Resize an image to ensure dimensions are within the specified limits.
-
-#     Args:
-#         img_path (str): Path to the original image.
-#         output_path (str): Path to save the resized image.
-#         max_width (int): Maximum allowed width (default: 1920 pixels).
-#         max_height (int): Maximum allowed height (default: 1080 pixels).
-#     Returns:
-#         str: Path to the resized image.
-#     """
-#     with Image.open(img_path) as img:
-#         img_format = img.format  # Preserve original format
-#         width, height = img.size
-
-#         # Calculate scaling factor
-#         scaling_factor = min(max_width / width, max_height / height, 1.0)
-#         new_width = int(width * scaling_factor)
-#         new_height = int(height * scaling_factor)
-
-#         # Resize and save the image
-#         img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-#         img.save(output_path, format=img_format)
-#         print(f"[DEBUG] Resized image saved at: {output_path}")
-#         print(f"[DEBUG] Resized image dimensions: {new_width}x{new_height}")
-#         return output_path
-
-
-# def compress_image(img_path, output_path, max_size=4*1024*1024, quality=85):
-#     """
-#     Compress an image to ensure it is under the specified size.
-
-#     Args:
-#         img_path (str): Path to the original image.
-#         output_path (str): Path to save the compressed image.
-#         max_size (int): Maximum allowed size in bytes (default: 4MB).
-#         quality (int): Quality for JPEG compression (default: 85).
-#     Returns:
-#         str: Path to the compressed image.
-#     """
-#     with Image.open(img_path) as img:
-#         img_format = img.format  # Preserve original format
-
-#         # Reduce quality iteratively until size is below max_size
-#         while os.path.getsize(img_path) > max_size:
-#             img.save(output_path, format=img_format, quality=quality)
-#             if quality <= 10:  # Prevent infinite loop if quality too low
-#                 break
-#             quality -= 10  # Reduce quality further
-
-#         print(f"[DEBUG] Compressed image saved at: {output_path}")
-#         print(f"[DEBUG] Compressed image size: {os.path.getsize(output_path)} bytes")
-#         return output_path
 
 
 # @api_view(['POST'])
@@ -423,49 +425,6 @@ def verify_face(request):
 #             if not result or "tags" not in result:
 #                 return Response({"error": "No visual search results found."}, status=status.HTTP_204_NO_CONTENT)
 
-#             # Process results
-#             extracted_products = extract_product_titles(result)
-            
-#             # Print results in the console
-#             print("\n[DEBUG] API Results:")
-#             for idx, product in enumerate(extracted_products, start=1):
-#                 print(f"{idx}. Title: {product['title']}")
-#                 print(f"   Redirect URL: {product['redirect_url']}")
-#                 print(f"   Action Type: {product['action_type']}")
-#                 print("-" * 40)
-
-#             return Response({
-#                 "message": "Image processed successfully.",
-#                 "products": extracted_products
-#             }, status=status.HTTP_200_OK)
-        
-    
 #     except Exception as e:
 #         print("[ERROR] General Error:", e)
 #         return Response({"error": "An error occurred while processing the image.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# def extract_product_titles(result):
-#     """
-#     Extract product titles and related information from the Bing Visual Search API response.
-
-#     Args:
-#         result (dict): Parsed JSON response from the Bing API.
-#     Returns:
-#         list: List of dictionaries containing product information.
-#     """
-#     products = []
-#     if "tags" in result:
-#         for tag in result["tags"]:
-#             if "actions" in tag:
-#                 for action in tag["actions"]:
-#                     if "data" in action and "value" in action["data"]:
-#                         for value_item in action["data"]["value"]:
-#                             product_name = value_item.get("name", "Unknown Title")
-#                             redirect_url = value_item.get("webSearchUrl", "")
-#                             products.append({
-#                                 "title": product_name,
-#                                 "redirect_url": redirect_url,
-#                                 "action_type": action.get("actionType", "Unknown Action Type")
-#                             })
-#     return products
