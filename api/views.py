@@ -17,7 +17,7 @@ from deepface import DeepFace
 from base.models import AttendanceLog
 from datetime import datetime, time
 import uuid
-
+ 
 # Get employee data
 @api_view(['GET'])
 def getData(request):
