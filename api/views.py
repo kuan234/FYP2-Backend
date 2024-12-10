@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth.hashers import check_password
 from rest_framework.parsers import MultiPartParser
 from .serializers import EmployeeSerializer, AttendanceSerializer
-from base.models import Employee
+from base.models import Employee 
 from deepface import DeepFace
 from base.models import AttendanceLog
 from datetime import datetime, time
