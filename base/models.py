@@ -34,7 +34,7 @@ class AttendanceLog(models.Model):
             
             # Return formatted string
             return f"{hours} hrs {minutes} minutes"
-        return "N/A"  # Handle cases where check-in or check-out is missing
+        return "N/A"  # Handle cases where check-in or check-out is missing 
 
     def is_checked_in(self):
         return self.check_in_time is not None

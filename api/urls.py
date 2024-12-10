@@ -16,5 +16,5 @@ urlpatterns = [
 # urlpatterns = [
 #     path('search/', views.searchProducts),
 #     path('upload/', views.uploadImage),
-# ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT) 
  

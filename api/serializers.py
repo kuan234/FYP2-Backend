@@ -8,7 +8,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'faceImage': {'required': False},  # Make faceImage optional
         }
-
+ 
 class AttendanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceLog
