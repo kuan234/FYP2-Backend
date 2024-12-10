@@ -5,6 +5,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
         fields = '__all__'
+        extra_kwargs = {
+            'faceImage': {'required': False},  # Make faceImage optional
+        }
 
 class AttendanceSerializer(serializers.ModelSerializer):
     class Meta:

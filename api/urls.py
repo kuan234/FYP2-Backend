@@ -9,6 +9,7 @@ urlpatterns = [
     path('login/', views.login_view),
     path('verify_face/', views.verify_face),
     path('log/', views.get_attendance_by_date),
+    path('detect_face/', views.detect_face),
 ]+ static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
     # path('detect_face/', views.detect_face),

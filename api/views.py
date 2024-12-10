@@ -16,8 +16,7 @@ from base.models import Employee
 from deepface import DeepFace
 from base.models import AttendanceLog
 from datetime import datetime, time
-
-
+import uuid
 
 # Get employee data
 @api_view(['GET'])
@@ -37,21 +36,25 @@ def getData(request):
 
 @api_view(['POST'])
 def add_employee(request):
-    if 'faceImage' not in request.FILES:
-        print(f"[DEBUG] No image")
-        image_face = None
-    else:
-        image_face = request.FILES['faceImage']
-    
-    print(f"[DEBUG] image: {image_face}")
-    serializer = EmployeeSerializer(data=request.data)
-    if serializer.is_valid():
-        employee = serializer.save()
-        if image_face:
-            employee.faceImage = image_face
-            employee.save()
-        return Response({"message": "Employee added successfully!", "id": employee.id}, status=201)
-    return Response(serializer.errors, status=400)
+    try:
+        if 'image' not in request.FILES:
+            print(f"[DEBUG] No image")
+            image_face = None
+        else:
+            image_face = request.FILES['image']
+        
+        print(f"[DEBUG] image: {image_face}")
+        serializer = EmployeeSerializer(data=request.data)
+        if serializer.is_valid():
+            employee = serializer.save()
+            if image_face:
+                employee.faceImage = image_face
+                employee.save()
+            return Response({"message": "Employee added successfully!", "id": employee.id}, status=201)
+        print(f"[DEBUG] Serializer errors: {serializer.errors}")  # Log errors for debugging
+        return Response(serializer.errors, status=400)
+    except Exception as e:
+        return Response({"message": f"An error occurred: {str(e)}"}, status=500)
 
 
 @api_view(['POST'])
@@ -110,83 +113,119 @@ def get_attendance_by_date(request):
     # Serialize the attendance data
     attendance_data = []
     for attendance in attendances:
+        check_in_time = attendance.check_in_time.strftime('%H:%M:%S')
+        
+        # Check if check_out_time is available
+        if attendance.check_out_time:
+            check_out_time = attendance.check_out_time.strftime('%H:%M:%S')
+            total_hours = attendance.calculate_total_hours()
+        else:
+            check_out_time = 'Not Checked Out Yet'
+            total_hours = 'N/A'
+
         attendance_data.append({
-            'check_in_time': attendance.check_in_time.strftime('%H:%M:%S'),
-            'check_out_time': attendance.check_out_time.strftime('%H:%M:%S'),
-            'total_hours': attendance.calculate_total_hours(),
+            'check_in_time': check_in_time,
+            'check_out_time': check_out_time,
+            'total_hours': total_hours,
         })
 
     return Response({'logs': attendance_data}, status=status.HTTP_200_OK)
-        
+
+
+@api_view(['POST'])
+def detect_face(request):
+    if 'image' not in request.FILES:
+        print("[DEBUG] No Image Provided")
+        return JsonResponse({'error': 'No image provided'}, status=400)
+
+    try:
+        # Get the uploaded image
+        image_file = request.FILES['image']
+        img = Image.open(image_file).convert('RGB')
+
+        # Resize the image
+        original_width, original_height = img.width, img.height
+        resized_width, resized_height = 360, 360
+        img_resize = img.resize((resized_width, resized_height))
+
+        # Convert image to NumPy array
+        img_array = np.array(img_resize)
+
+        # Detect faces using DeepFace
+        try:
+            detections = DeepFace.extract_faces(
+                img_array, detector_backend="yolov8", align=True
+            )
+            print(f"[DEBUG] Detections:", detections)
+
+            if not detections:
+                return JsonResponse({
+                    'face_detected': False,
+                    'num_faces': 0,
+                    'faces': [],
+                })
+
+            # Initialize face data and save directory
+            faces = []
+            save_directory = os.path.join(settings.MEDIA_ROOT, "images")
+            os.makedirs(save_directory, exist_ok=True)
+
+            # Create a drawable object for the resized image
+            draw = ImageDraw.Draw(img_resize)
+
+            for i, detection in enumerate(detections):
+                bbox = detection.get('facial_area', None)  # Use DeepFace's bounding box info
+                if bbox:
+                    # Scale bounding box coordinates back to original dimensions
+                    x = int(bbox['x'] * original_width / resized_width)
+                    y = int(bbox['y'] * original_height / resized_height)
+                    w = int(bbox['w'] * original_width / resized_width)
+                    h = int(bbox['h'] * original_height / resized_height)
+
+                    # Crop face from the original image
+                    cropped_img = img.crop((x, y, x + w, y + h))
+
+                    # Generate a unique filename using uuid
+                    unique_filename = f"face_{uuid.uuid4().hex}.jpg"
+                    cropped_face_path = os.path.join(save_directory, unique_filename)
+                    cropped_img.save(cropped_face_path)
+
+                    # Append face data for response
+                    faces.append({'path': f"media/images/{unique_filename}", 'bbox': {'x': x, 'y': y, 'width': w, 'height': h}})
+                    print(f"[DEBUG] Faces:", faces[i])
+
+                    # Draw bounding box on the resized image (use resized dimensions)
+                    draw.rectangle(
+                        [(bbox['x'], bbox['y']), (bbox['x'] + bbox['w'], bbox['y'] + bbox['h'])],
+                        outline="red",
+                        width=3
+                    )
+
+            # Save the image with bounding boxes
+            annotated_image_filename = f"annotated_image_{uuid.uuid4().hex}.jpg"
+            annotated_image_path = os.path.join(save_directory, annotated_image_filename)
+            img_resize.save(annotated_image_path)
+
+            return JsonResponse({
+                'face_detected': True,
+                'num_faces': len(faces),
+                'faces': faces,
+                'annotated_image': f"media/images/{annotated_image_filename}",
+                'cropped_image': f"media/images/{unique_filename}"
+            })
+
+        except Exception as detection_error:
+            print(f"DeepFace detection error: {str(detection_error)}")
+            return JsonResponse({'error': f'Face detection error: {str(detection_error)}'}, status=500)
+
+    except Exception as e:
+        print("Error during face detection:", str(e))
+        return JsonResponse({'error': f'Error during face detection: {str(e)}'}, status=500)
+
+
+
 # Initialize the MTCNN detector once to avoid reloading on every request
 detector = MTCNN()
-
-# @api_view(['POST'])
-# def detect_face(request):
-#     if 'image' not in request.FILES:
-#         return JsonResponse({'error': 'No image provided'}, status=400)
-
-#     try:
-#         # Get the uploaded image
-#         image_file = request.FILES['image']
-#         img = Image.open(image_file).convert('RGB')
-        
-#         # Get original width and height from the request
-#         original_width = int(request.POST.get('width', img.width))
-#         original_height = int(request.POST.get('height', img.height))
-#         print(f"Original Height: {original_height}")  # Debugging resized image shape
-#         print(f"Original Width: {original_width}")  # Debugging resized image shape
-
-
-#         # Resize for detection
-#         resized_width = 240
-#         resized_height = 240
-#         ratio_height = original_height / resized_height
-#         ratio_weight = original_width /resized_width
-#         print(f"ratio Height: {ratio_height}")  # Debugging resized image shape
-#         print(f"ratio Width: {ratio_weight}") 
-#         img_resized = img.resize((resized_width, resized_height))
-
-#         # Convert image to NumPy array
-#         img_array = np.array(img_resized)
-
-#         print(f"Resized image shape: {img_array.shape}")  # Debugging resized image shape
-
-#         # Detect faces using MTCNN
-#         detections = detector.detect_faces(img_array)
-
-#         # Extract bounding boxes and scale them back to the original size
-#         faces = []
-#         for detection in detections:
-#             x, y, w, h = detection['box']  # x, y are the top-left corner, w and h are width and height
-
-#             # Scale bounding box back to the original dimensions
-#             scale_x = ratio_weight
-#             scale_y = ratio_height
-
-#             scaled_face = {
-#                 'x': int(x  ),
-#                 'y': int(y  ),
-#                 'width': int(w  ),
-#                 'height': int(h  ),
-#             }
-#             print(f"Detected face (scaled): {scaled_face}")  # Debug log
-#             faces.append(scaled_face)
-
-#         print(f"Detected faces (original scale): {faces}")  # Debugging bounding boxes
-#         print(f"Num Face: {len(faces)}")  # Debugging bounding boxes
-#         # Return the bounding box data along with the number of faces detected
-#         return JsonResponse({
-#             'face_detected': len(faces) > 0,
-#             'num_faces': len(faces),
-#             'faces': faces,
-#         })
-
-#     except Exception as e:
-#         print("Error during face detection:", str(e))
-#         return JsonResponse({'error': f'Error during face detection: {str(e)}'}, status=500)
-
-
 @api_view(['POST'])
 def verify_face(request):
     if 'image' not in request.FILES:
@@ -263,7 +302,7 @@ def verify_face(request):
         
         print(f"[DEBUG] user image: {user.faceImage}")
 
-        reference_image_path = os.path.join(settings.MEDIA_ROOT, "images", str(user.faceImage))  # Adjust path if needed
+        reference_image_path = os.path.join(settings.MEDIA_ROOT, str(user.faceImage))  # Adjust path if needed
         print(f"[DEBUG] reference_image_path: {reference_image_path}")
 
         # 3. Face Verification Using DeepFace
@@ -327,10 +366,10 @@ def verify_face(request):
             today = now.date()
 
             # Define valid check-in and check-out times
-            check_in_start = time(9, 0)  # 9:00 AM
-            check_in_end = time(10, 0)   # 10:00 AM
-            check_out_start = time(18, 0)  # 5:00 PM
-            check_out_end = time(23, 59)    # 6:00 PM
+            check_in_start = time(9, 0) 
+            check_in_end = time(11, 0)  
+            check_out_start = time(18, 0)  
+            check_out_end = time(23, 59)    
             
             attendance, created = AttendanceLog.objects.get_or_create(employee=user, date=today)
             
