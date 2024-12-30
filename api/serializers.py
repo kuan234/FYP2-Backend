@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from base.models import Employee, AttendanceLog
+from django.contrib.auth.hashers import make_password
+from base.models import Employee, AttendanceLog, CheckInCheckOutTime
 
 class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -8,6 +9,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'faceImage': {'required': False},  # Make faceImage optional
         }
+    def create(self, validated_data):
+        if 'password' in validated_data:
+            validated_data['password'] = make_password(validated_data['password'])
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if 'password' in validated_data:
+            validated_data['password'] = make_password(validated_data['password'])
+        return super().update(instance, validated_data)
  
 class AttendanceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -19,3 +29,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
         total_seconds = (obj.check_out_time - obj.check_in_time).seconds
         total_hours = total_seconds / 3600
         return round(total_hours, 2)
+    
+class CheckInCheckOutTimeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CheckInCheckOutTime
+        fields = '__all__'

@@ -6,7 +6,7 @@ from django.contrib.auth.hashers import make_password, check_password
 class Employee(models.Model):
     name = models.CharField(max_length=50)
     email = models.EmailField(unique=True)
-    password = models.CharField(max_length=20)
+    password = models.CharField(max_length=100)
     role = models.CharField(max_length=20)
     department = models.CharField(max_length=50)
     faceImage = models.ImageField(upload_to='images/', blank=True, null=True)
@@ -41,11 +41,12 @@ class AttendanceLog(models.Model):
 
     def is_checked_out(self):
         return self.check_out_time is not None
+    
+class CheckInCheckOutTime(models.Model):
+    check_in_start_time = models.TimeField(null=True, blank=True)
+    check_in_end_time = models.TimeField(null=True, blank=True)
+    check_out_start_time = models.TimeField(null=True, blank=True)
+    check_out_end_time = models.TimeField(null=True, blank=True)
 
-# class Item(models.Model):
-#     name = models.CharField(max_length=200)
-#     created_at = models.DateTimeField(auto_now_add=True)
-
-# class ImageModel(models.Model):
-#     image_path = models.ImageField(upload_to='images/')
-#     created_at = models.DateTimeField(auto_now_add=True)
+    def __str__(self):
+        return "Check-In/Check-Out Times"

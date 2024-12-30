@@ -9,14 +9,138 @@ from rest_framework.decorators import api_view
 from django.conf import settings
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
-from django.contrib.auth.hashers import check_password
+from django.contrib.auth.hashers import check_password, make_password
 from rest_framework.parsers import MultiPartParser
 from .serializers import EmployeeSerializer, AttendanceSerializer
-from base.models import Employee 
+from base.models import Employee, CheckInCheckOutTime, AttendanceLog
 from deepface import DeepFace
-from base.models import AttendanceLog
-from datetime import datetime, time
+from datetime import datetime, time, date
 import uuid
+import concurrent.futures
+
+@api_view(['GET'])
+def get_check_in_status(request, user_id):
+    try:
+        today = date.today()
+        attendance_log = AttendanceLog.objects.filter(employee_id=user_id, date=today).first()
+        if attendance_log:
+            if attendance_log.check_in_time and attendance_log.check_out_time:
+                return Response({'checked_in': False, 'checked_out': True}, status=status.HTTP_200_OK)
+            elif attendance_log.check_in_time:
+                return Response({'checked_in': True, 'checked_out': False}, status=status.HTTP_200_OK)
+        return Response({'checked_in': False, 'checked_out': False}, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': f'An error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+@api_view(['GET'])
+def get_user_role(request, user_id):
+    try:
+        user = Employee.objects.get(id=user_id)
+        return Response({'role': user.role}, status=status.HTTP_200_OK)
+    except Employee.DoesNotExist:
+        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': f'An error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_times(request):
+    try:
+        check_in_check_out_time = CheckInCheckOutTime.objects.first()
+        if not check_in_check_out_time:
+            return Response({'error': 'No times set'}, status=status.HTTP_404_NOT_FOUND)
+
+        data = {
+            'check_in_start': check_in_check_out_time.check_in_start_time.strftime('%H:%M'),
+            'check_in_end': check_in_check_out_time.check_in_end_time.strftime('%H:%M'),
+            'check_out_start': check_in_check_out_time.check_out_start_time.strftime('%H:%M'),
+            'check_out_end': check_in_check_out_time.check_out_end_time.strftime('%H:%M'),
+        }
+        return Response(data, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({'error': f'An error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+def update_times(request):
+    check_in_start = request.data.get('check_in_start')
+    check_in_end = request.data.get('check_in_end')
+    check_out_start = request.data.get('check_out_start')
+    check_out_end = request.data.get('check_out_end')
+
+    print(f"[DEBUG] Received data: check_in_start={check_in_start}, check_in_end={check_in_end}, check_out_start={check_out_start}, check_out_end={check_out_end}")
+
+
+    if not all([check_in_start, check_in_end, check_out_start, check_out_end]):
+        return Response({'error': 'All time fields are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        # Convert strings to time objects
+        check_in_start_time = datetime.strptime(check_in_start, '%H:%M').time()
+        check_in_end_time = datetime.strptime(check_in_end, '%H:%M').time()
+        check_out_start_time = datetime.strptime(check_out_start, '%H:%M').time()
+        check_out_end_time = datetime.strptime(check_out_end, '%H:%M').time()
+
+        # Get or create the CheckInCheckOutTime instance
+        check_in_check_out_time, created = CheckInCheckOutTime.objects.get_or_create(id=1)
+        check_in_check_out_time.check_in_start_time = check_in_start_time
+        check_in_check_out_time.check_in_end_time = check_in_end_time
+        check_in_check_out_time.check_out_start_time = check_out_start_time
+        check_in_check_out_time.check_out_end_time = check_out_end_time
+        check_in_check_out_time.save()
+
+        return Response({'success': 'Times updated successfully'}, status=status.HTTP_200_OK)
+    except ValueError:
+        return Response({'error': 'Invalid time format, use HH:MM'}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({'error': f'An error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def update_face_image(request):
+    user_id = request.query_params.get('user_id')
+    if not user_id:
+        return Response({'error': 'User ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        employee = Employee.objects.get(id=user_id)
+    except Employee.DoesNotExist:
+        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if 'faceImage' not in request.FILES:
+        return Response({'error': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+    face_image = request.FILES['faceImage']
+    print(f"[DEBUG] face_image: {face_image}")
+    employee.faceImage = face_image
+    employee.save()
+
+    return Response({'success': 'Face image updated successfully', 'faceImage': employee.faceImage.url}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+def changePassword(request):
+    user_id = request.data.get('user_id')
+    current_password = request.data.get('current_password')
+    new_password = request.data.get('new_password')
+
+    if not user_id or not current_password or not new_password:
+        return Response({'error': 'All fields are required'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        employee = Employee.objects.get(id=user_id)
+        print(f"[DEBUG] employee: {employee}")
+        print(f"[DEBUG] current_password: {current_password}")
+        print(f"[DEBUG] new_password: {new_password}")
+        if check_password(current_password, employee.password):
+            employee.password = make_password(new_password)
+            employee.save()
+            return Response({'success': 'Password changed successfully'}, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Current password is incorrect'}, status=status.HTTP_400_BAD_REQUEST)
+    except Employee.DoesNotExist:
+        return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        print(f"[DEBUG] image: {str(e)}")
+        return Response({'error': f'An error occurred: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
  
 # Get employee data
 @api_view(['GET'])
@@ -65,7 +189,7 @@ def login_view(request):
 
         try:
             employee = Employee.objects.get(email=email)
-            if password == employee.password:
+            if check_password(password, employee.password):
                 # Send the employee details with the response
                 return Response({
                     "message": "Login successful!",
@@ -222,256 +346,130 @@ def detect_face(request):
         print("Error during face detection:", str(e))
         return JsonResponse({'error': f'Error during face detection: {str(e)}'}, status=500)
 
-
-
-# Initialize the MTCNN detector once to avoid reloading on every request
-detector = MTCNN()
 @api_view(['POST'])
 def verify_face(request):
     if 'image' not in request.FILES:
-        print(f"[DEBUG] No Image Provided")
         return Response({'error': 'No image provided'}, status=400)
-        
 
     try:
         # 1. Process the Captured Image
         image_file = request.FILES['image']
         img = Image.open(image_file).convert('RGB')
-        original_width, original_height = img.size
 
-        # Resize image for detection
-        img_resized = img.resize((240, 240))
+        # Resize image for consistency
+        img_resized = img.resize((160, 160))  # Smaller size for faster processing
         img_array = np.array(img_resized)
 
-        # Detect faces using MTCNN
-        detections = detector.detect_faces(img_array)
+        # Detect faces using DeepFace.extract_faces
+        detections = DeepFace.extract_faces(img_path=img_array, enforce_detection=False)
 
         if len(detections) == 0:
-            face = 0
-            return Response({face})
-
-        # Prepare to draw bounding boxes and crop faces
-        draw = ImageDraw.Draw(img_resized)
-        cropped_faces = []
+            return Response({'faces_detected': 0})
 
         for detection in detections:
-            # Bounding box in resized image
-            x_resized, y_resized, width_resized, height_resized = detection['box']
+            region = detection["facial_area"]
+            x, y, width, height = region['x'], region['y'], region['w'], region['h']
 
-            # Scale bounding box back to original image dimensions
-            x = int(x_resized * original_width / 240)
-            y = int(y_resized * original_height / 240)
-            width = int(width_resized * original_width / 240)
-            height = int(height_resized * original_height / 240)
-
-            # Draw bounding box on resized image
-            draw.rectangle(
-                [(x_resized, y_resized), (x_resized + width_resized, y_resized + height_resized)], 
-                outline="red", 
-                width=3
-            )
-
-            # Crop face from the original image
-            cropped_face = img.crop((x, y, x + width, y + height))
-            cropped_faces.append(cropped_face)
-
-        # Save the detected face image with bounding boxes
-        detected_faces_path = os.path.join(settings.MEDIA_ROOT, "images", "detected_faces.jpg")
-        img_resized.save(detected_faces_path)
-
-        # Save the cropped faces temporarily
-        cropped_face_paths = []
-        for i, cropped_face in enumerate(cropped_faces):
-            cropped_face_path = os.path.join(settings.MEDIA_ROOT, "images", f"cropped_face_{i}.jpg")
+            # Crop face from the resized image
+            cropped_face = img_resized.crop((x, y, x + width, y + height))
+            cropped_face_path = os.path.join(settings.MEDIA_ROOT, "images", "cropped_face.jpg")
             cropped_face.save(cropped_face_path)
-            cropped_face_paths.append(cropped_face_path)
 
-        # 2. Retrieve the Reference Image from Database
-        user_id = request.POST.get('user_id')
-        print(f"[DEBUG] user ID: {user_id}")
+            # 2. Retrieve the Reference Image from Database
+            user_id = request.POST.get('user_id')
+            if not user_id:
+                return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not user_id:
-            return Response({'error': 'user_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            user = Employee.objects.filter(id=user_id).first()
+            if not user:
+                return Response({'error': 'User not found'}, status=404)
 
-        user = Employee.objects.filter(id=user_id).first()
-        if not user:
-            return Response({'error': 'User not found'}, status=404)
+            if not user.faceImage:
+                return Response({'error': 'Face image not found for this user'}, status=404)
 
-        if not user.faceImage:
-            return Response({'error': 'Face image not found for this user'}, status=404)
-        
-        print(f"[DEBUG] user image: {user.faceImage}")
+            reference_image_path = os.path.join(settings.MEDIA_ROOT, str(user.faceImage))
 
-        reference_image_path = os.path.join(settings.MEDIA_ROOT, str(user.faceImage))  # Adjust path if needed
-        print(f"[DEBUG] reference_image_path: {reference_image_path}")
+            # 3. Face Verification Using DeepFace
+            def verify_face():
+                try:
+                    result = DeepFace.verify(
+                        img1_path=cropped_face_path,  # Cropped Image
+                        img2_path=reference_image_path,  # User Face Image in Database
+                        model_name="Facenet",  # or "VGG-Face"
+                        enforce_detection=False
+                    )
+                    return result
+                except Exception as e:
+                    return {'error': str(e)}
 
-        # 3. Face Verification Using DeepFace
-        verification_results = []
-        for face_path in cropped_face_paths:
-            try:
-# result = DeepFace.verify(img1_path, img2_path, model_name="VGG-Face", detector_backend="opencv", distance_metric="cosine", enforce_detection=True, align=True, normalization="base")
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(verify_face)
+                result = future.result()
 
-                result = DeepFace.verify(
-                    img1_path=face_path, # Crop Image
-                    img2_path=reference_image_path, # User Face Image in Database
-                    model_name="Facenet",  # or "VGG-Face"
-                    enforce_detection=False
-                )
-                 # Extract the distance or similarity score
-                distance = result['distance']  # The smaller the distance, the more similar the faces
-                
-                # Set the threshold to 0.3  , distance need to < threshold
-                threshold = 0.4
+            if 'error' in result:
+                return Response({'error': result['error']}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-                # Check if faces are verified based on the threshold
-                if distance < threshold:
-                    verification_results.append({
-                    'face_path': face_path,
+            # Extract the distance or similarity score
+            distance = result['distance']  # The smaller the distance, the more similar the faces
+
+            # Set the threshold to 0.3, distance need to < threshold
+            threshold = 0.4
+            detected_image_path = "/media/images/detected_faces.jpg"
+
+            # Check if faces are verified based on the threshold
+            if distance < threshold:
+                verification_results = {
+                    'face_path': cropped_face_path,
                     'verified': True,
                     'distance': result['distance'],
-                    'threshold': result['threshold'],
+                    'threshold': threshold,
                     'similarity': 1 - result['distance'],  # Calculate similarity
-                })                    
-                else:
-                    verification_results.append({
-                    'face_path': face_path,
-                    'verified': False,
-                    'distance': result['distance'],
-                    'threshold': result['threshold'],
-                    'similarity': 1 - result['distance'],  # Calculate similarity
-                }) 
-            
-                    
-                # verification_results.append({
-                #     'face_path': face_path,
-                #     'verified': result['verified'],
-                #     'distance': result['distance'],
-                #     'threshold': result['threshold'],
-                #     'similarity': 1 - result['distance'],  # Calculate similarity
-                # })  
-                print(f"[DEBUG] Result: {verification_results}")
-                detected_image_path = "/media/images/detected_faces.jpg"
-                print(f"[DEBUG] detected_image_path: {detected_image_path}")
+                }
 
+                # Log attendance
+                now = datetime.now()
+                today = now.date()
 
+                try:
+                    check_in_check_out_time = CheckInCheckOutTime.objects.first()
+                    check_in_start = check_in_check_out_time.check_in_start_time
+                    check_in_end = check_in_check_out_time.check_in_end_time
+                    check_out_start = check_in_check_out_time.check_out_start_time
+                    check_out_end = check_in_check_out_time.check_out_end_time
+                except CheckInCheckOutTime.DoesNotExist:
+                    return Response({'error': 'Check-in/check-out times not set'}, status=404)
 
-            except Exception as e:
-                print(f"Error verifying face {face_path} against reference: {e}")
-                verification_results.append({'face_path': face_path, 'error': str(e)})
+                attendance, created = AttendanceLog.objects.get_or_create(employee=user, date=today)
 
-        if verification_results and any(result['verified'] for result in verification_results):
-            # If at least one face was verified, log attendance
-            # Get today's date and time
-            now = datetime.now()
-            today = now.date()
-
-            # Define valid check-in and check-out times
-            check_in_start = time(9, 0) 
-            check_in_end = time(11, 0)  
-            check_out_start = time(18, 0)  
-            check_out_end = time(23, 59)    
-            
-            attendance, created = AttendanceLog.objects.get_or_create(employee=user, date=today)
-            
-            # Check if it's within check-in time range
-            if not AttendanceLog.objects.filter(employee=user, date=today).exists():
-                # Attendance not recorded yet, allow check-in
-                if check_in_start <= now.time() <= check_in_end:
-                    attendance = AttendanceLog.objects.create(employee=user, date=today, check_in_time=now)
-                    message = "Check-in successful"
-                else:
-                    message = f"Check-in is only allowed between {check_in_start} and {check_in_end}."
-            else:
-                # Attendance already exists, check if it's check-out time
-                attendance = AttendanceLog.objects.get(employee=user, date=today)
-
-                if attendance.check_out_time is None:  # If not checked out
-                    if check_out_start <= now.time() <= check_out_end:
-                        attendance.check_out_time = now
-                        attendance.save()
-                        message = "Check-out successful"
+                if not created:
+                    if attendance.check_out_time is None:
+                        if check_out_start <= now.time() <= check_out_end:
+                            attendance.check_out_time = now
+                            attendance.save()
+                            message = "Check-out successful"
+                        else:
+                            message = f"Check-out is only allowed between {check_out_start} and {check_out_end}."
                     else:
-                        message = f"Check-out is only allowed between {check_out_start} and {check_out_end}."
+                        message = "Attendance already logged for today"
                 else:
-                    message = "Attendance already logged for today"
+                    if check_in_start <= now.time() <= check_in_end:
+                        attendance.check_in_time = now
+                        attendance.save()
+                        message = "Check-in successful"
+                    else:
+                        attendance.delete()  # Remove the created record if check-in is not allowed
+                        message = f"Check-in is only allowed between {check_in_start} and {check_in_end}."
 
-            print(f"[DEBUG] Attendance: {message}")
+                return Response({
+                    'message': message,
+                    'faces_detected': 1,
+                    'verification_results': verification_results,
+                    'detected_image_path': detected_image_path,
+                    'check_in_time': attendance.check_in_time.strftime('%H:%M:%S') if attendance.check_in_time else 'N/A',
+                    'check_out_time': attendance.check_out_time.strftime('%H:%M:%S') if attendance.check_out_time else 'N/A',
+                })
 
-        # Return Response
-        return Response({
-            'message': 'Face(s) detected and verification performed successfully',
-            'faces_detected': len(detections),
-            'verification_results': verification_results,
-            'detected_image_path': detected_image_path,  # Relative path for accessing the image,
-            'similarity': verification_results
-        })
+        return Response({'message': "Face verification failed", 'faces_detected': len(detections)})
 
     except Exception as e:
-        print("Error during face verification:", str(e))
         return Response({'error': f'Error during face verification: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# @api_view(['POST'])
-# def uploadImage(request):
-#     if 'image' not in request.FILES:
-#         return Response({"error": "No image file provided."}, status=status.HTTP_400_BAD_REQUEST)
-
-#     try:
-#         # Save the uploaded image
-#         image = request.FILES['image']
-#         image_instance = ImageModel(image_path=image)
-#         image_instance.save()
-
-#         original_img_path = os.path.join(settings.MEDIA_ROOT, image_instance.image_path.name)
-#         if not os.path.exists(original_img_path):
-#             print(f"[ERROR] Image path does not exist: {original_img_path}")
-#             return Response({"error": "Image file not saved correctly."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-#         print(f"[DEBUG] Reading image from: {original_img_path}")
-
-#         # Check image size and format
-#         image_size = os.path.getsize(original_img_path)
-#         with Image.open(original_img_path) as img:
-#             image_format = img.format
-#             image_dimensions = img.size
-
-#         print(f"[DEBUG] Image format: {image_format}")
-#         print(f"[DEBUG] Image size: {image_size} bytes")
-#         print(f"[DEBUG] Image dimensions: {image_dimensions}")
-
-#         # File path for resized/compressed image
-#         processed_img_path = os.path.join(settings.MEDIA_ROOT, "processed_images", image_instance.image_path.name)
-
-#         # Resize or compress image if too large
-#         if image_size > 4 * 1024 * 1024 or max(image_dimensions) > 1920:
-#             print("[DEBUG] Resizing or compressing image...")
-#             os.makedirs(os.path.dirname(processed_img_path), exist_ok=True)
-#             resize_image(original_img_path, processed_img_path, max_width=1920, max_height=1080)
-
-#             # Compress if still too large
-#             if os.path.getsize(processed_img_path) > 4 * 1024 * 1024:
-#                 compress_image(processed_img_path, processed_img_path)
-#         else:
-#             processed_img_path = original_img_path
-
-#         # Call Bing Visual Search API with the processed image
-#         with open(processed_img_path, "rb") as image_fd:
-#             headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
-#             files = {"image": image_fd}
-
-#             print("[DEBUG] Sending image to Bing Visual Search API...")
-#             response = requests.post(BING_ENDPOINT, headers=headers, files=files)
-#             print(f"[DEBUG] API Response Status Code: {response.status_code}")
-
-#             if response.status_code != 200:
-#                 print("[ERROR] Response Content:", response.text)
-#                 response.raise_for_status()
-
-#             result = response.json()
-
-#             if not result or "tags" not in result:
-#                 return Response({"error": "No visual search results found."}, status=status.HTTP_204_NO_CONTENT)
-
-#     except Exception as e:
-#         print("[ERROR] General Error:", e)
-#         return Response({"error": "An error occurred while processing the image.", "details": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
